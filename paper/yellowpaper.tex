@@ -1,0 +1,134 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,booktabs,microtype,xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black}
+\setlength{\emergencystretch}{2em}
+
+\newtheorem{definition}{Definition}[section]
+
+\title{0l0 Yellow Paper: Formal Specification of the v2 Proof System}
+\author{0l0 contributors\\ \texttt{0l0} v0.3.0 prototype}
+\date{2026-09-30}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document normatively specifies the \texttt{0l0} v0.3.0 proof
+system: symbols, domains, data structures with exact byte layouts,
+deterministic algorithms for proving and verification, the Fiat--Shamir
+transcript schedule, and test vectors. It is the companion to the
+whitepaper (protocol and theorems); in case of divergence between prose
+and code, the test suite decides, and this paper is amended.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Symbols and domains}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Symbol & Value & Definition \\
+\midrule
+$D$ & $64$ & ring degree, $R_q = \mathbb{Z}_q[X]/(X^D+1)$ \\
+$q$ & $1073750017$ & prime field modulus, $q = 2^{30}+2^{13}+1$ \\
+$n, m$ & $4$, $8$ & commitment matrix shape over $R_q$ \\
+$\beta, B$ & $1$, $64$ & witness norm bounds \\
+$S, S'$ & $65536$, $65472$ & mask / response bounds \\
+$w_c$ & $16$ & challenge weight \\
+$\tau$ & $2$ & rounds \\
+$W_{64}$ & $817737403$ & primitive $64$-th root of unity mod $q$ \\
+$\psi$ & $187094501$ & $128$-th root with $\psi^2 = W_{64}$ \\
+\bottomrule
+\end{tabular}
+\caption{Frozen constants. All integers are unsigned unless stated.}
+\end{table}
+
+Domain tags (single bytes): matrix expansion $0x41$; round challenges
+$0x50$; mask sampling $0x42$; test witness sampler $0x77$.
+
+\section{Data structures}
+
+Polynomials are $64$ coefficients in $[0,q)$, coefficient-major,
+little-endian 32-bit words unless packed. A \emph{centered} value is
+$c - q$ if $c > q/2$ else $c$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Object & Bytes & Layout \\
+\midrule
+\texttt{t1} round commitment & $1024$ & $4$ polys $\times$ LE32 coeffs \\
+\texttt{z} response (unpacked) & $2048$ & $8$ polys $\times$ LE32 coeffs \\
+\texttt{z} response (packed) & $1088$ & $512 \times 17$-bit offset-binary words, LSB-first \\
+\texttt{pack} block & $288$ & $u_0[4]\,0[4]\,u_1[4]\,0[4]$ then $272$ zero bytes \\
+\texttt{chal} block & $64$ & master salt ($32$) then $32$ zero bytes \\
+proof & $4577$ & version byte ($2$) then round$_0$, round$_1$, pack, chal \\
+\bottomrule
+\end{tabular}
+\caption{Exact wire layout. Packed words are offset-binary
+$w = \bar{z} + 65536$ for centered $\bar{z}$; valid iff
+$64 \le w \le 131008$ (one check enforces canonicality and bound).}
+\end{table}
+
+\section{Algorithms}
+
+\begin{definition}[Commit]
+$t = A\cdot w$ with negacyclic products via negative wrapped convolution:
+twist by $\psi^j$, size-64 NTT, pointwise multiply, inverse NTT, untwist.
+Normative result equals schoolbook $O(D^2)$ multiplication bitwise.
+\end{definition}
+
+\begin{definition}[Prove, per round $j$ with salt $s$]
+For $\mathit{attempt} \in \{0,\dots,7\}$: seed
+$\gets H(s\Vert j\Vert\mathit{attempt})$; sample mask $r$ uniform on
+$[-S,S]^{512}$ by rejection from the XOF stream; $t_1 \gets A\cdot r$;
+$u \gets \langle r,r\rangle$. Let $h$ be the transcript output of
+Section~4; the challenge $c \gets \texttt{Expand}(h)$
+is sparse ternary with exactly $16$ nonzero $\pm 1$ entries.
+Respond $z \gets r + c\star w$; accept iff
+$\lVert z\rVert_\infty \le S'$.
+\end{definition}
+
+\begin{definition}[Verify]
+Parse version ($=2$), enforce zero regions and packed-word ranges, then per
+round re-derive $c$ and check $A\cdot z = t_1 + c\star y$ and
+$\lVert z\rVert_\infty \le S'$. Reject on any failure
+(\textsf{MalformedEncoding} for encoding, \textsf{VerificationFailed} else).
+\end{definition}
+
+\section{Transcript schedule}
+
+\texttt{FS} absorbs, in order: \texttt{params} ($D,q,\beta,B,S',\tau$,
+version), \texttt{A} ($H$ of the flattened matrix), \texttt{y} (1024 B),
+\texttt{t}, \texttt{salt}, \texttt{round}, \texttt{t1} (1024 B),
+\texttt{u}. Absorption is $H(\mathit{state}\Vert\mathit{label}\Vert
+\mathit{len}_{16}\Vert\mathit{data})$ (data over 1024 B is digested first);
+labels $\le 64$ B, data $\le 2048$ B. Challenges squeeze 32 B under tag
+$0x50$. The hash is BLAKE3-32 (spec-exact) with a documented
+counter-cascade XOF, not the official seek mode.
+
+\section{Test vectors}
+
+Matrix seed $[11;32]$, witness seed $[22;32]$, salt $[33;32]$
+(full values: run \texttt{examples/vectors}):
+\begin{itemize}
+\item $y$ ($1024$ B, LE32): begins \texttt{e406e318\ldots}.
+\item $t = $ \texttt{4b010000} (LE32 of $331$, the witness support weight).
+\item proof ($4577$ B, version byte \texttt{02}),
+  first $32$ bytes \texttt{026d1d3f\ldots}; SHA-256:
+{\footnotesize\begin{verbatim}79095a012e44d5cbd784430bf449f8e668e72d25bf22
+841189245615f59be624\end{verbatim}}
+\end{itemize}
+BLAKE3 vectors: the 11 official $n \in \{0,1,2,31,32,63,64,65,1023,1024,
+1025\}$ cases with input $i \bmod 251$ (see \texttt{tests/kat\_hash.rs}).
+
+\section*{License}
+Specification companion to GPLv3 software; see \texttt{LICENSE}.
+
+\end{document}

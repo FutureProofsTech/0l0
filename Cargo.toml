@@ -1,0 +1,42 @@
+[package]
+name = "sq-pq"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.97"
+description = "0SQ-PQ: production-prototype lattice-concise post-quantum NIZK for a fixed application relation — zero-dependency safe Rust"
+license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["zero-knowledge", "post-quantum", "lattice", "no-std"]
+categories = ["cryptography", "no-std"]
+
+[dependencies]
+
+[features]
+default = ["std"]
+std = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 2
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+nursery = "warn"
+# Package-metadata lints only (no repository URL for this experimental tree).
+cargo = "allow"
+correctness = "deny"
+suspicious = "deny"
+complexity = "warn"
+perf = "warn"
+style = "warn"

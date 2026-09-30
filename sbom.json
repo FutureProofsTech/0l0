@@ -1,0 +1,15 @@
+{
+  "bomFormat": "CycloneDX-lite",
+  "specVersion": "1.0",
+  "project": {
+    "name": "sq-pq",
+    "version": "0.3.0"
+  },
+  "components": [
+    {
+      "name": "sq-pq",
+      "version": "0.3.0"
+    }
+  ],
+  "supply_chain_claim": "zero third-party dependencies; fuzz/tooling-only dev-packages (libfuzzer-sys) live outside Cargo.lock"
+}

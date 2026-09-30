@@ -1,0 +1,171 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,booktabs,microtype,xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black}
+\setlength{\emergencystretch}{2em}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+\title{0l0: A Lattice-Concise Post-Quantum Non-Interactive\\ Zero-Knowledge Proof for a Fixed Relation}
+\author{0l0 contributors\\ \texttt{0l0} v0.3.0 prototype}
+\date{2026-09-30}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe a non-interactive zero-knowledge proof of knowledge for a fixed
+relation $R^*$ over the cyclotomic ring $R_q = \mathbb{Z}_q[X]/(X^{64}+1)$,
+implemented from scratch in safe, dependency-free Rust. Proofs are
+$4577$ bytes, proving takes $\approx 190\,\mu\mathrm{s}$ and verification
+$\approx 80\,\mu\mathrm{s}$ (p50, x86-64). The construction is a two-round
+Lyubashevsky identification scheme compiled with Fiat--Shamir over a BLAKE3
+transcript. This paper states the protocol, the exact parameters, three
+theorems (completeness, knowledge soundness via extraction, quantified
+zero knowledge) with their measured evidence, and the explicitly open
+items. It is a prototype specification, not a security audit.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Relation and parameters}
+
+\begin{definition}[Relation $R^*$]
+Public inputs are an Ajtai matrix $A \in R_q^{4\times 8}$, a commitment
+$y = A\cdot w$ and a scalar $t$. A witness is $w \in R_q^8$ with ternary
+coefficients such that {\rm (i)} $A\cdot w = y$, {\rm (ii)}
+$\lVert w\rVert_\infty \le 1$, $\lVert w\rVert_2 \le 64$, and
+{\rm (iii)} $\langle w,w\rangle = t \pmod q$ over centered representatives.
+\end{definition}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Symbol & Value & Meaning \\
+\midrule
+$D$ & $64$ & ring degree, $R_q = \mathbb{Z}_q[X]/(X^D+1)$ \\
+$q$ & $1073750017 = 2^{30}+2^{13}+1$ & prime, $q \equiv 1 \pmod{128}$ \\
+$n \times m$ & $4 \times 8$ & Ajtai matrix shape over $R_q$ \\
+$\beta$, $B$ & $1$, $64$ & witness infinity / Euclidean bounds \\
+$S$, $S'$ & $65536$, $65472$ & mask half-width / response bound \\
+$w_c$ & $16$ & challenge weight (nonzero $\pm 1$ coefficients) \\
+$\tau$ & $2$ & independent rounds \\
+retries & $8$ & rejection attempts per round \\
+proof & $4577$ bytes & $1 + 2\cdot(1024+1088) + 288 + 64$ \\
+\bottomrule
+\end{tabular}
+\caption{Frozen v0.3.0 parameters.}
+\end{table}
+
+The modulus admits primitive $64$-th roots of unity, so all ring products
+use a from-scratch number-theoretic transform ($W_{64} = 817737403$,
+verified of exact order $64$). Responses satisfy
+$\lVert z\rVert_\infty \le 65472 < 2^{16}$ and are stored at 17 bits each:
+$512 \times 17 = 8704$ bits $= 1088$ bytes exactly, with no padding bits.
+A single range check on $[64,131008]$ enforces canonicality and the
+response bound together.
+
+\section{Protocol}
+
+Per round $j \in \{0,1\}$ with caller salt $s$:
+\begin{enumerate}
+\item Sample a uniform mask $r \in [-S,S]^{512}$ from the XOF stream
+  keyed by the salt, the round index, and the attempt counter.
+\item Commit $t_1 = A\cdot r$ and $u = \langle r,r\rangle \pmod q$.
+\item Derive the challenge $c$ (sparse ternary, exactly $16$ nonzero
+  $\pm 1$ coefficients) from the transcript over
+  $(\mathit{params},A,y,t,s,j,t_1,u)$.
+\item Respond $z = r + c\star w$; accept iff $\lVert z\rVert_\infty \le S'$,
+  else retry (at most $8$ attempts, else \textsf{SamplingExhausted}).
+\end{enumerate}
+The proof is
+$\mathit{version}\Vert t_{1,0}\Vert z_0\Vert t_{1,1}\Vert z_1\Vert
+u_0\,0\,u_1\,0\Vert s$ ($4577$ bytes, version $2$). The verifier
+re-derives both challenges and checks, per round,
+$A\cdot z = t_1 + c\star y$, the response bound, decoding canonicality,
+and reserved-zero regions.
+
+The challenge space per round is $\binom{64}{16}\cdot 2^{16} = 2^{64.80}$,
+giving forking error $\approx 2^{-129.6}$ over two rounds.
+
+\section{Theorems}
+
+\begin{theorem}[Completeness]
+An honest prover outputs an accepting proof with probability at least
+$1 - 1.3\times 10^{-3}$ per proof (else \textsf{SamplingExhausted}, and
+the caller retries with fresh salt).
+\end{theorem}
+\noindent\textit{Sketch.} $A\cdot z = A\cdot r + c\star A\cdot w = t_1 +
+c\star y$ by $R_q$-linearity. Since $\lVert c\star w\rVert_\infty \le 16$,
+per-coefficient acceptance is $(2S'+1)/(2S+1)$ and independence gives
+per-round accept $\approx 0.606$ (measured $14$--$34/40$); two rounds with
+$8$ retries fail with probability $\approx 1.3\times 10^{-3}$ (measured
+$\le 2/60$). \hfill $\square$
+
+\begin{theorem}[Knowledge soundness]
+From two accepting transcripts sharing $(t_1,u)$ with distinct challenges,
+either the extractor recovers $w^*$ satisfying all three claims of $R^*$
+exactly, or the challenge difference vanishes (discarded; usability
+$\approx 1-64/q$ per pair, measured $0/200$ non-invertible). Forgery
+without extraction needs transcript grinding at $\approx 2^{-130}$ (ROM),
+each attempt additionally facing a $q^{-256}$ direct-equation barrier.
+\end{theorem}
+\noindent\textit{Sketch.} Same mask $r$ at the fork gives
+$\Delta z = \Delta c\star w$; invertible $\Delta c$ yields
+$w^* = \Delta c^{-1}\star\Delta z = w$ exactly, and all claims are checked
+on $w^*$ directly — no slack bound is needed. No verifier equation can pin
+$\langle w,w\rangle = t$ on its own (kernel-ambiguity argument); packing
+closes through extraction, exhibited at $488/488$ on a tiny model with
+all three claims checked. \hfill $\square$
+
+\begin{theorem}[Zero knowledge, quantified]
+Accepted responses are exactly uniform on $[-S',S']^{512}$.
+For fixed shift $|s| \le S-S'$, acceptance keeps precisely the values
+mapping bijectively onto the response range, so the conditional distance
+is zero in total variation (exhibited by a $\chi^2$ test).
+Mask commitments are
+functions of uniform randomness only. Computational hiding rests on mask
+recovery, estimated at Core-SVP $2^{38}$--$2^{42}$ (marginal — not claimed
+as production-grade).
+\end{theorem}
+\noindent\textit{Sketch.} The uniformity claim is per-coefficient exact
+arithmetic, lifted jointly by independence. A former packing scalar
+$v = \langle r,c\star w\rangle$ was removed from the wire after variance
+analysis showed it encodes $\lVert cw\rVert_2$ ($w=0$ forces $v\equiv0$);
+its slots are canonically zero and enforced. \hfill $\square$
+
+\section{Measured evidence (release day, x86-64)}
+
+75/75 tests green (dev and \texttt{--release}); 11/11 official BLAKE3
+KATs; an independent Python model produces byte-identical proofs (2/2);
+a tiny-model extractor recovers witnesses on all 488 usable challenge
+pairs with 0/2400 direct grinds; exhaustive single-bitflip sweep
+36,616/36,616 reject; 20,000-trial random-wire grinding game at 0 accepts;
+`cargo-fuzz` 14.9M runs clean; full Miri lib run 35/35 green; prover
+p50 $184\,\mu\mathrm{s}$, verifier p50 $80\,\mu\mathrm{s}$.
+
+\section{Open items (exact statements)}
+
+\begin{enumerate}
+\item Tail bound on $\lVert \Delta c^{-1}\rVert_1$: closed by analysis
+  (the extractor verifies directly, so no tail bound is needed).
+\item Closed-form forking-reduction constants: structure proven,
+  constants explicitly out of prototype scope.
+\item Hiding beyond conditional uniformity: superseded (responses are
+  exactly uniform); computational leg marginal by measurement.
+\item Gaussian sampling, BKZ-simulation depth, external audit, lab side
+  channels, NIST parameter blessing: roadmap or out-of-scope items,
+  tracked in \texttt{ROADMAP.md}.
+\end{enumerate}
+
+\section*{License}
+This specification accompanies software licensed under GPLv3; see the
+\texttt{LICENSE} file in the repository.
+
+\end{document}
