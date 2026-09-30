@@ -65,6 +65,29 @@ whitepaper), hiding computationally marginal, no lab side-channel
 evaluation, no external audit. Details in
 [`docs/negative-results.md`](docs/negative-results.md).
 
+## Red-team campaign (measured, all recorded)
+
+The brutal suite (`tests/brutal.rs`, 14 tests) attacks every feasible
+vector; the full log with exact counts is
+[`docs/redteam-log.md`](docs/redteam-log.md):
+
+| Attack | Scale | Result |
+|---|---|---|
+| Single-bitflip forgery, exhaustive | 36,616 mutants (all bytes × all bits) | **36,616/36,616 reject** |
+| Two-bit pairs | 5,000 random pairs | 5,000/5,000 reject |
+| Round-block swap, cross-proof splice | 3 | all reject |
+| Direct grinding on random wire | 20,000 trials | **0 accepts** |
+| Exhaustion census (200 salts), sparsity classes | 280 proofs | 0 exhausted |
+| Decode edges, framing, API limits, seed edges, transcript framing | 20 cases | all fail closed |
+| libFuzzer (`fuzz/`, corpus kept) | 14.9 M runs, this code | 0 crashes |
+| Full Miri lib run | 35/35 | green, no UB |
+
+The campaign caught a real bug: exhaustive flipping found `v`-slot flips
+that verified (finding F24) — the zeroed packing scalars were
+unauthenticated. Fixed by enforcing canonical zeros at verify; every wire
+byte is now functional-and-bound or enforced-zero, and both
+implementations mirror the check.
+
 ## Repository map
 
 ```
